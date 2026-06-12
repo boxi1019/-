@@ -1,0 +1,381 @@
+
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>转盘活动</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+.wheel-container{position:relative;width:400px;height:400px;margin:0 auto;max-width:90vw;}
+.wheel{width:100%;height:100%;border-radius:50%;position:relative;overflow:hidden;box-shadow:0 10px 30px rgba(0,0,0,0.3);transition:transform 4s cubic-bezier(0.23,1,0.32,1);}
+.wheel-segment{position:absolute;width:50%;height:50%;transform-origin:right bottom;display:flex;align-items:center;justify-content:center;color:#fff;font-weight:bold;text-shadow:0 0 3px #000;box-sizing:border-box;padding:0;}
+.wheel-segment img{
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  position: absolute;
+  top: 0;
+  left: 0;
+  border-radius: 0;
+  margin: 0;
+  max-width: unset;
+  max-height: unset;
+  z-index: 1;
+}
+.pointer{position:absolute;top:-20px;left:50%;transform:translateX(-50%);width:0;height:0;border-left:20px solid transparent;border-right:20px solid transparent;border-top:30px solid #333;z-index:10;}
+.prize-tag{display:flex;flex-direction:column;align-items:center;font-size:12px;position:relative;z-index:2;}
+.prize-item{cursor:pointer;user-select:none;}
+.prize-item.active{ring:2px;ring-blue-500;background:#dbeafe;}
+.trade-item{border:1px solid #eee;border-radius:6px;padding:10px;margin:8px 0;}
+.nick-box{background:#eef2ff;border-radius:8px;padding:12px;margin-bottom:16px;}
+.page{display:none;}
+.page.active{display:block;}
+.tip-text{font-size:14px;color:#666;}
+</style>
+</head>
+<body class="bg-gray-100">
+<div class="max-w-xl mx-auto p-4">
+  <!-- 页面1：选择活动 -->
+  <div id="page1" class="page active">
+    <h2 class="text-2xl font-bold text-center mb-8">选择活动</h2>
+    <select id="activitySelect" class="w-full border p-3 rounded text-lg mb-6">
+      <option value="">-- 请选择活动 --</option>
+    </select>
+    <button id="toPage2" class="w-full bg-blue-600 text-white py-3 rounded-lg text-lg">下一步</button>
+  </div>
+
+  <!-- 页面2：选择昵称（仅cn） -->
+  <div id="page2" class="page">
+    <h2 class="text-2xl font-bold text-center mb-8">选择昵称</h2>
+    <div class="nick-box">
+      <select id="nickSelect" class="w-full border p-2 rounded">
+        <option value="cn">cn</option>
+      </select>
+    </div>
+    <div class="flex gap-3 mt-6">
+      <button id="backPage1" class="flex-1 bg-gray-400 text-white py-3 rounded-lg">上一步</button>
+      <button id="toPage3" class="flex-1 bg-blue-600 text-white py-3 rounded-lg">下一步</button>
+    </div>
+  </div>
+
+  <!-- 页面3：转盘 + 置换 -->
+  <div id="page3" class="page">
+    <p id="timeTip" class="text-orange-600 font-semibold text-center mb-2"></p>
+    <p id="countTip" class="tip-text text-center mb-4"></p>
+    <div class="wheel-container mb-6">
+      <div class="pointer"></div>
+      <div id="wheel" class="wheel"></div>
+    </div>
+    <div class="text-center mb-4">
+      <button id="spinBtn" class="bg-blue-600 text-white px-6 py-3 rounded-lg text-lg">开始抽奖</button>
+      <div id="result" class="mt-3 text-lg font-semibold text-red-600"></div>
+    </div>
+
+    <div class="bg-white rounded-lg p-4 shadow my-4">
+      <h2 class="font-bold text-lg mb-2">我的奖品（点击选中置换）</h2>
+      <div id="myPrizes" class="flex flex-wrap gap-2 mb-3"></div>
+      <div class="flex gap-2">
+        <input id="wantText" placeholder="想要兑换的奖品" class="border p-2 rounded flex-1">
+        <button id="publishTrade" class="bg-green-600 text-white px-4 py-2 rounded">发布置换</button>
+      </div>
+    </div>
+
+    <div class="bg-white rounded-lg p-4 shadow">
+      <h2 class="font-bold text-lg mb-2">置换广场</h2>
+      <div id="tradeList" class="max-h-60 overflow-y-auto"></div>
+      <div id="emptyTip" class="text-gray-400 text-center py-4">暂无置换信息</div>
+    </div>
+
+    <button id="backPage2" class="w-full bg-gray-400 text-white py-3 rounded-lg mt-6">返回上一步</button>
+  </div>
+</div>
+
+<script>
+const KEY = "lottery_activity_data";
+let allDocs = [], currentDocId = "";
+let currentAngle = 0, isSpinning = false, selectedPrize = null;
+let myPrizeList = [], tradeData = [], prizeList = [], currentNick = "cn";
+let userLeftCount = 0, maxDrawCount = 0;
+
+// 页面元素
+const page1 = document.getElementById("page1");
+const page2 = document.getElementById("page2");
+const page3 = document.getElementById("page3");
+const activitySelect = document.getElementById("activitySelect");
+const toPage2 = document.getElementById("toPage2");
+const backPage1 = document.getElementById("backPage1");
+const toPage3 = document.getElementById("toPage3");
+const backPage2 = document.getElementById("backPage2");
+const wheel = document.getElementById("wheel");
+const spinBtn = document.getElementById("spinBtn");
+const result = document.getElementById("result");
+const timeTip = document.getElementById("timeTip");
+const countTip = document.getElementById("countTip");
+const myPrizes = document.getElementById("myPrizes");
+const wantText = document.getElementById("wantText");
+const publishTrade = document.getElementById("publishTrade");
+const tradeList = document.getElementById("tradeList");
+const emptyTip = document.getElementById("emptyTip");
+
+// 页面切换
+function switchPage(showPage){
+  page1.classList.remove("active");
+  page2.classList.remove("active");
+  page3.classList.remove("active");
+  showPage.classList.add("active");
+}
+
+// 读取本地数据
+function loadFromLocal(){
+  const s = localStorage.getItem(KEY);
+  allDocs = s ? JSON.parse(s) : [];
+}
+
+// 保存全部数据
+function saveAllData(){
+  localStorage.setItem(KEY, JSON.stringify(allDocs));
+}
+
+// 渲染活动下拉
+function renderActivitySelect(){
+  let html = '<option value="">-- 请选择活动 --</option>';
+  allDocs.forEach(d=>html += `<option value="${d.id}">${d.name}</option>`);
+  activitySelect.innerHTML = html;
+}
+
+// 校验活动时间
+function checkActivityTime(startTimeStr){
+  if(!startTimeStr) return true;
+  const now = new Date().getTime();
+  const start = new Date(startTimeStr).getTime();
+  return now >= start;
+}
+
+// 过滤库存>0的奖品
+function getAvailablePrizes(prizes){
+  return prizes.filter(item => item.stock > 0);
+}
+
+// 加载活动数据
+function loadActivity(docId){
+  currentDocId = docId;
+  const doc = allDocs.find(d=>d.id === docId);
+  if(!doc) return;
+
+  maxDrawCount = doc.maxDrawCount || 0;
+  // 初始化用户抽奖次数
+  if(!doc.userDrawCount) doc.userDrawCount = {};
+  if(doc.userDrawCount[currentNick] === undefined) doc.userDrawCount[currentNick] = 0;
+  userLeftCount = maxDrawCount - doc.userDrawCount[currentNick];
+
+  prizeList = JSON.parse(JSON.stringify(doc.prizes));
+  myPrizeList = doc.myPrizeList || [];
+  tradeData = doc.tradeData || [];
+  selectedPrize = null;
+
+  // 时间判断
+  const canStart = checkActivityTime(doc.startTime);
+  if(doc.startTime){
+    const formatTime = doc.startTime.replace("T"," ");
+    timeTip.innerText = canStart ? `✅ 活动已开启，开始时间：${formatTime}` : `⏰ 未到活动时间：${formatTime}`;
+  }else{
+    timeTip.innerText = "⚠️ 暂未设置活动开始时间";
+  }
+
+  // 次数提示 + 按钮禁用
+  countTip.innerText = `剩余抽奖次数：${userLeftCount}/${maxDrawCount}`;
+  let canDraw = canStart && userLeftCount > 0 && getAvailablePrizes(prizeList).length > 0;
+  spinBtn.disabled = !canDraw;
+
+  drawWheel();
+  renderMyPrizes();
+  renderTradeList();
+  result.textContent = "";
+  wantText.value = "";
+}
+
+// 绘制转盘（只显示有库存奖品）
+function drawWheel(){
+  const available = getAvailablePrizes(prizeList);
+  if(available.length === 0){
+    wheel.innerHTML = '<div class="w-full h-full flex items-center justify-center text-xl font-bold">奖品已全部抽完</div>';
+    return;
+  }
+  const seg = 360 / available.length;
+  let html = "";
+  available.forEach((p,i)=>{
+    const img = p.img ? `<img src="${p.img}">` : "";
+    html += `<div class="wheel-segment" style="background:${p.color};transform:rotate(${seg*i}deg)"><div class="prize-tag">${img}<span>${p.text}</span></div></div>`;
+  });
+  wheel.innerHTML = html;
+}
+
+// 开始抽奖
+function startSpin(){
+  if(isSpinning) return;
+  const doc = allDocs.find(d=>d.id === currentDocId);
+  const available = getAvailablePrizes(prizeList);
+  if(available.length === 0) return alert("所有奖品库存已清空！");
+  if(doc.userDrawCount[currentNick] >= maxDrawCount) return alert("抽奖次数已用尽！");
+
+  isSpinning = true;
+  spinBtn.disabled = true;
+  result.textContent = "";
+
+  let total = available.reduce((sum, item) => sum + item.prob, 0);
+  let r = Math.random() * total, idx = 0;
+  for(; idx < available.length; idx++){
+    r -= available[idx].prob;
+    if(r <= 0) break;
+  }
+
+  const targetPrize = available[idx];
+  const seg = 360 / available.length;
+  currentAngle += 360 * 5 + seg * idx + seg/2 - currentAngle % 360;
+  wheel.style.transform = `rotate(${currentAngle}deg)`;
+
+  setTimeout(()=>{
+    isSpinning = false;
+    // 弹窗提示
+    alert(`恭喜你获得${targetPrize.text}`);
+    result.textContent = `🎉 抽到：${targetPrize.text}`;
+
+    // 1. 扣减奖品库存
+    const originIdx = prizeList.findIndex(p => p.text === targetPrize.text);
+    if(originIdx > -1) prizeList[originIdx].stock -= 1;
+    doc.prizes = prizeList;
+
+    // 2. 增加用户已抽次数
+    doc.userDrawCount[currentNick] += 1;
+    userLeftCount = maxDrawCount - doc.userDrawCount[currentNick];
+
+    // 3. 加入个人奖品
+    myPrizeList.push(targetPrize.text);
+    doc.myPrizeList = myPrizeList;
+
+    selectedPrize = null;
+    saveAllData();
+
+    // 刷新界面
+    loadActivity(currentDocId);
+  },4000);
+}
+
+// 渲染我的奖品
+function renderMyPrizes(){
+  if(myPrizeList.length === 0){
+    myPrizes.innerHTML='<span class="text-gray-400">暂无奖品</span>';
+    return;
+  }
+  let html = "";
+  myPrizeList.forEach((item,i)=>{
+    const cls = selectedPrize === i ? "active ring-2 ring-blue-500 bg-blue-100" : "bg-gray-200";
+    html += `<span class="prize-item ${cls} px-3 py-1 rounded" data-idx="${i}">${item}</span>`;
+  });
+  myPrizes.innerHTML = html;
+  document.querySelectorAll(".prize-item").forEach(el=>{
+    el.onclick = ()=>{
+      const i = Number(el.dataset.idx);
+      selectedPrize = selectedPrize === i ? null : i;
+      renderMyPrizes();
+    };
+  });
+}
+
+// 发布置换
+function publishTradeOrder(){
+  if(selectedPrize === null) return alert("请先选中奖品");
+  const want = wantText.value.trim();
+  if(!want) return alert("请填写兑换需求");
+  const give = myPrizeList[selectedPrize];
+  tradeData.push({
+    id: Date.now(),
+    nick: currentNick,
+    givePrize: give,
+    wantPrize: want,
+    time: new Date().toLocaleTimeString()
+  });
+  wantText.value = "";
+  selectedPrize = null;
+  const doc = allDocs.find(d=>d.id === currentDocId);
+  doc.tradeData = tradeData;
+  saveAllData();
+  renderMyPrizes();
+  renderTradeList();
+}
+
+// 渲染置换广场
+function renderTradeList(){
+  if(tradeData.length === 0){
+    tradeList.innerHTML = "";
+    emptyTip.classList.remove("hidden");
+    return;
+  }
+  emptyTip.classList.add("hidden");
+  let html = "";
+  tradeData.forEach(t=>{
+    html += `<div class="trade-item">
+      <div class="text-sm mb-2">${t.time}｜${t.nick} 出让${t.givePrize}→求换${t.wantPrize}</div>
+      <button class="doTrade bg-orange-500 text-white px-3 py-1 rounded text-sm"
+        data-id="${t.id}" data-give="${t.givePrize}" data-want="${t.wantPrize}" data-from="${t.nick}">
+        立即置换
+      </button>
+    </div>`;
+  });
+  tradeList.innerHTML = html;
+  document.querySelectorAll(".doTrade").forEach(btn=>{
+    btn.onclick = ()=>handleTrade(btn);
+  });
+}
+
+// 执行置换
+function handleTrade(btn){
+  const id = Number(btn.dataset.id);
+  const fromNick = btn.dataset.from;
+  const givePrize = btn.dataset.give;
+  const wantPrize = btn.dataset.want;
+
+  const idx = tradeData.findIndex(t=>t.id === id);
+  if(idx < 0) return;
+  const myIdx = myPrizeList.findIndex(p=>p === wantPrize);
+  if(myIdx < 0) return alert(`你没有${wantPrize}，无法置换`);
+
+  myPrizeList[myIdx] = givePrize;
+  tradeData.splice(idx,1);
+
+  const doc = allDocs.find(d=>d.id===currentDocId);
+  if(!doc.tradeRecord) doc.tradeRecord = [];
+  doc.tradeRecord.push({
+    time: new Date().toLocaleTimeString(),
+    from: fromNick,
+    give: givePrize,
+    to: currentNick,
+    want: wantPrize
+  });
+  doc.myPrizeList = myPrizeList;
+  doc.tradeData = tradeData;
+  saveAllData();
+  renderMyPrizes();
+  renderTradeList();
+  alert("置换成功！");
+}
+
+// 页面跳转
+toPage2.onclick = ()=>{
+  if(!activitySelect.value) return alert("请先选择活动");
+  loadActivity(activitySelect.value);
+  switchPage(page2);
+};
+backPage1.onclick = ()=>switchPage(page1);
+toPage3.onclick = ()=>switchPage(page3);
+backPage2.onclick = ()=>switchPage(page2);
+spinBtn.onclick = startSpin;
+publishTrade.onclick = publishTradeOrder;
+
+// 初始化
+loadFromLocal();
+renderActivitySelect();
+</script>
+</body>
+</html>
